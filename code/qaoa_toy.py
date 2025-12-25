@@ -1,29 +1,55 @@
-
+import numpy as np
+from qiskit import QuantumCircuit
 from qiskit_aer import Aer
-from qiskit.utils import algorithm_globals
-from qiskit.circuit.library import QAOAAnsatz
-from qiskit.algorithms import QAOA as QiskitQAOA
-from qiskit_optimization.applications.ising.max_cut import Maxcut
-from qiskit_optimization.converters import QuadraticProgramToQubo
-from qiskit_optimization.algorithms import MinimumEigenOptimizer
+from scipy.optimize import minimize
 
-algorithm_globals.random_seed = 42
+backend = Aer.get_backend("qasm_simulator")
+SHOTS = 512
 
-graph = {0: [1, 2], 1: [0, 2], 2: [0, 1]}
+# 2-qubit MaxCut: H = Z0 Z1
 
-maxcut = Maxcut(graph)
-qp = maxcut.to_quadratic_program()
-qp2qubo = QuadraticProgramToQubo()
-qubo = qp2qubo.convert(qp)
+def qaoa_circuit(gamma, beta):
+    qc = QuantumCircuit(2)
+    qc.h([0, 1])
 
-backend = Aer.get_backend("statevector_simulator")
+    qc.cx(0, 1)
+    qc.rz(2 * gamma, 1)
+    qc.cx(0, 1)
 
-ansatz = QAOAAnsatz(num_qubits=3, reps=1)
-qaoa_alg = QiskitQAOA(ansatz=ansatz, quantum_instance=backend)
+    qc.rx(2 * beta, 0)
+    qc.rx(2 * beta, 1)
 
-meo = MinimumEigenOptimizer(qaoa_alg)
-result = meo.solve(qubo)
+    qc.measure_all()
+    return qc
 
-print("Optimal bitstring:", result.x)
-print("Optimal objective:", result.fval)
 
+def expectation_zz(counts):
+    exp = 0.0
+    for bitstring, count in counts.items():
+        z0 = 1 if bitstring[1] == "0" else -1
+        z1 = 1 if bitstring[0] == "0" else -1
+        exp += (count / SHOTS) * z0 * z1
+    return exp
+
+
+def energy(params):
+    gamma, beta = params
+    qc = qaoa_circuit(gamma, beta)
+
+    job = backend.run(qc, shots=SHOTS)
+    result = job.result()
+    counts = result.get_counts()
+
+    return expectation_zz(counts)
+
+
+# Classical optimization loop
+res = minimize(
+    energy,
+    x0=[0.5, 0.5],
+    method="COBYLA",
+    options={"maxiter": 20}
+)
+
+print("Optimal (gamma, beta):", res.x)
+print("Minimum energy:", res.fun)
