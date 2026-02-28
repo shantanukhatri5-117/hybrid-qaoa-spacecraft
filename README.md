@@ -26,3 +26,14 @@ for evaluating QAOA-based routing under NISQ constraints.
 ## Run Instructions
 pip install -r requirements.txt
 python experiments/run_noiseless.py
+
+## Repository Structure
+
+code/
+    Core QAOA implementations and classical baselines
+
+data/
+    Telemetry-derived edge weights
+
+results/
+    Final plots and experiment outputs
