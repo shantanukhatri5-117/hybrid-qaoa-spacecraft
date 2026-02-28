@@ -1,33 +1,71 @@
-from qiskit import Aer, execute
-from qiskit.circuit.library import QAOAAnsatz
-from qiskit_optimization.applications.ising.max_cut import Maxcut
-from qiskit_optimization.converters import QuadraticProgramToQubo
-from qiskit_optimization.algorithms import MinimumEigenOptimizer
-from qiskit.algorithms.minimum_eigensolvers import QAOA
-from qiskit.utils import algorithm_globals
+import numpy as np
+import csv
+import os
+import time
+from qiskit import QuantumCircuit
+from qiskit_aer import Aer
+from scipy.optimize import minimize
 
-algorithm_globals.random_seed = 42
+# Config
+backend = Aer.get_backend("qasm_simulator")
+SHOTS = 512
 
-graph = {
-    0: [1, 2],
-    1: [0, 2],
-    2: [0, 1]
-}
+# Logging
+def log_result(tag, energy):
+    os.makedirs("results", exist_ok=True)
+    with open("results/qaoa_results.csv", "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            time.strftime("%Y-%m-%d %H:%M:%S"),
+            tag,
+            energy
+        ])
+# QAOA circuit (supports depth p)
 
-maxcut = Maxcut(graph)
-qp = maxcut.to_quadratic_program()
+def qaoa_circuit(params, p):
+    qc = QuantumCircuit(2)
+    qc.h([0, 1])
 
-qp2qubo = QuadraticProgramToQubo()
-qubo = qp2qubo.convert(qp)
+    for layer in range(p):
+        gamma = params[2 * layer]
+        beta = params[2 * layer + 1]
+# Cost unitary
+        qc.cx(0, 1)
+        qc.rz(2 * gamma, 1)
+        qc.cx(0, 1)
+# Mixer
+        qc.rx(2 * beta, 0)
+        qc.rx(2 * beta, 1)
 
-backend = Aer.get_backend("aer_simulator_statevector")
+    qc.measure_all()
+    return qc
+# Expectation ⟨Z₀Z₁⟩
+def expectation_zz(counts):
+    exp = 0.0
+    for bitstring, count in counts.items():
+        z0 = 1 if bitstring[1] == "0" else -1
+        z1 = 1 if bitstring[0] == "0" else -1
+        exp += (count / SHOTS) * z0 * z1
+    return exp
 
-qaoa = QAOAAnsatz(3, reps=1)
-optimizer = QAOA(qaoa=qaoa, optimizer=None)
+for p in [1, 2]:
+    print(f"\nRunning QAOA with p = {p}")
 
-meo = MinimumEigenOptimizer(optimizer)
-result = meo.solve(qubo)
+    def energy(params):
+        qc = qaoa_circuit(params, p)
+        job = backend.run(qc, shots=SHOTS)
+        counts = job.result().get_counts()
+        return expectation_zz(counts)
 
-print("Optimal bitstring:", result.x)
-print("Optimal objective:", result.fval)
+    init = np.random.rand(2 * p)
 
+    res = minimize(
+        energy,
+        x0=init,
+        method="COBYLA",
+        options={"maxiter": 25}
+    )
+
+    print(f"p = {p}, energy = {res.fun}")
+
+    log_result(f"p{p}_noiseless", res.fun)
